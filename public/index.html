@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="application-name" content="ClipShare" />
+  <meta name="apple-mobile-web-app-title" content="ClipShare" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="description" content="Instant cross-device text and code sharing via SSE or QR code" />
+
+  <title>ClipShare – Instant Cross-Device Text Transfer</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="shortcut icon" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+
+  <!-- PWA Manifest (sets app name + icon in browser tab / installed app) -->
+  <link rel="manifest" href="/manifest.json" />
+
+  <!--
+    Unregister any old service workers and wipe stale caches from previous
+    projects on this origin so the correct app name and icon appear instantly.
+  -->
+  <script>
+    (function () {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          regs.forEach(function (reg) {
+            reg.unregister();
+            console.log('[ClipShare] Removed stale SW:', reg.scope);
+          });
+        });
+      }
+      if ('caches' in window) {
+        caches.keys().then(function (keys) {
+          keys.forEach(function (key) {
+            caches.delete(key);
+            console.log('[ClipShare] Cleared cache:', key);
+          });
+        });
+      }
+    })();
+  </script>
+
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- QR Code Generator – served locally (no CDN dependency) -->
+  <script src="/lib/qrcode.min.js"></script>
+
+  <!-- QR Code Scanner – served locally (no CDN dependency) -->
+  <script src="/lib/html5-qrcode.min.js"></script>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════
+       TOP HEADER
+  ═══════════════════════════════════════════════════ -->
+  <header class="app-header">
+    <div class="logo">
+      <span class="logo-icon">⚡</span>
+      <span class="logo-text">ClipShare</span>
+    </div>
+
+    <!-- Status Pill -->
+    <div class="status-pill" id="statusPill">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-label" id="statusLabel">Checking…</span>
+    </div>
+
+    <!-- Server connection indicator (only meaningful in Online mode) -->
+    <div class="server-pill" id="serverPill" title="SSE Server Connection">
+      <span class="server-dot" id="serverDot"></span>
+      <span class="server-label" id="serverLabel">Server</span>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════
+       MAIN LAYOUT
+  ═══════════════════════════════════════════════════ -->
+  <main class="app-main">
+
+    <!-- ── MODE BANNER ───────────────────────────────── -->
+    <div class="mode-banner" id="modeBanner">
+      <span id="modeBannerIcon">🌐</span>
+      <span id="modeBannerText">Online Mode – changes sync automatically</span>
+    </div>
+
+    <!-- ── TEXTAREA CARD ─────────────────────────────── -->
+    <section class="card textarea-card">
+      <div class="card-toolbar">
+        <label class="card-title" for="mainTextarea">Shared Text / Code</label>
+        <div class="toolbar-right">
+          <span class="char-count" id="charCount">0 chars</span>
+          <button class="btn btn-ghost btn-sm" id="clearBtn" title="Clear text">✕ Clear</button>
+        </div>
+      </div>
+
+      <textarea
+        id="mainTextarea"
+        class="main-textarea"
+        placeholder="Paste or type your text / code here…&#10;&#10;Online  →  it syncs to other devices instantly.&#10;Offline →  click 'Generate QR Code' below."
+        spellcheck="false"
+        autocorrect="off"
+        autocapitalize="off"
+      ></textarea>
+
+      <!-- Save indicator that flashes on sync -->
+      <div class="sync-indicator" id="syncIndicator">
+        <span class="sync-spinner"></span>
+        <span id="syncMsg">Syncing…</span>
+      </div>
+    </section>
+
+    <!-- ── ACTION BUTTONS ────────────────────────────── -->
+    <section class="action-row">
+      <button class="btn btn-primary" id="copyBtn">
+        <span class="btn-icon">📋</span> Copy Text
+      </button>
+
+      <button class="btn btn-secondary" id="qrBtn">
+        <span class="btn-icon">📷</span> Generate QR Code
+      </button>
+
+      <button class="btn btn-accent" id="scanBtn">
+        <span class="btn-icon">🔍</span> Scan QR Code
+      </button>
+    </section>
+
+    <!-- ── QR CODE DISPLAY PANEL ─────────────────────── -->
+    <section class="card qr-panel" id="qrPanel" hidden>
+      <div class="card-toolbar">
+        <span class="card-title">QR Code (Offline Share)</span>
+        <button class="btn btn-ghost btn-sm" id="qrCloseBtn">✕ Close</button>
+      </div>
+
+      <p class="qr-hint">
+        Show this QR code to Device B and let it scan with the camera.
+      </p>
+
+      <div class="qr-wrapper">
+        <div id="qrContainer"></div>
+      </div>
+
+      <p class="qr-size-warning" id="qrSizeWarning" hidden>
+        ⚠️ Text exceeds 1 000 characters. QR code may be dense and harder to scan.
+        Consider sharing smaller chunks.
+      </p>
+
+      <button class="btn btn-ghost btn-sm qr-download-btn" id="qrDownloadBtn">
+        ⬇ Download QR as PNG
+      </button>
+    </section>
+
+    <!-- ── LAST SYNC INFO ────────────────────────────── -->
+    <div class="sync-meta" id="syncMeta" hidden>
+      <span id="syncMetaText"></span>
+    </div>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════════════════
+       SCANNER MODAL (full-screen overlay)
+  ═══════════════════════════════════════════════════ -->
+  <div class="modal-overlay" id="scannerModal" hidden>
+    <div class="modal-card scanner-modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">📷 Scan QR Code</h2>
+        <button class="btn btn-ghost btn-sm" id="scannerCloseBtn">✕ Close</button>
+      </div>
+
+      <p class="modal-hint">
+        Point the camera at the QR code displayed on Device A.
+      </p>
+
+      <!-- Camera view injected here by html5-qrcode -->
+      <div id="qrReaderContainer" class="qr-reader-container"></div>
+
+      <div class="scanner-result" id="scannerResult" hidden>
+        <div class="scanner-result-icon">✅</div>
+        <p class="scanner-result-label">Scanned successfully!</p>
+        <pre class="scanner-result-preview" id="scannerResultPreview"></pre>
+        <button class="btn btn-primary" id="scannerUseBtn">Use This Text</button>
+      </div>
+
+      <!-- Camera select for desktop multi-camera setups -->
+      <div class="camera-select-row" id="cameraSelectRow" hidden>
+        <label for="cameraSelect">Camera:</label>
+        <select id="cameraSelect" class="camera-select"></select>
+        <button class="btn btn-ghost btn-sm" id="switchCameraBtn">Switch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       TOAST NOTIFICATION
+  ═══════════════════════════════════════════════════ -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
