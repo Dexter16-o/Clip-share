@@ -16,6 +16,7 @@ const API_SHARE   = '/api/share';
 const API_STREAM  = '/api/stream';
 const API_CURRENT = '/api/current';
 const API_CLEAR   = '/api/clear';
+const API_UPLOAD  = '/api/upload';
 
 const DEBOUNCE_MS     = 900;   // ms to wait after last keystroke before pushing
 const QR_WARN_CHARS   = 1000;  // show warning above this length
@@ -376,9 +377,13 @@ clearBtn.addEventListener('click', async () => {
 //   QR CODE GENERATION (Offline Mode)
 // ════════════════════════════════════════════════════════════
 
-qrBtn.addEventListener('click', generateQR);
+qrBtn.addEventListener('click', () => {
+  generateQR().catch((err) => {
+    showToast('Failed to generate QR: ' + err.message, 'error');
+  });
+});
 
-function generateQR() {
+async function generateQR() {
   const text = textarea.value.trim();
 
   if (!text) {
@@ -396,10 +401,28 @@ function generateQR() {
   // Size warning
   qrSizeWarning.hidden = text.length <= QR_WARN_CHARS;
 
-  // Create QR Code using QRCode.js (loaded from CDN)
+  let qrPayload = text;
+  let generatedDownloadLink = false;
+  try {
+    const res = await fetch(API_UPLOAD, {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ text }),
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    qrPayload = data.shareUrl || data.downloadUrl || text;
+    generatedDownloadLink = Boolean(data.shareUrl || data.downloadUrl);
+  } catch (err) {
+    console.warn('[QR] Upload failed, falling back to text payload:', err);
+    showToast('Could not prepare download link. Using text QR fallback.', 'warning', 3200);
+  }
+
+  // Create QR Code using QRCode.js (loaded locally)
   try {
     qrCodeInstance = new QRCode(qrContainer, {
-      text         : text,
+      text         : qrPayload,
       width        : QR_SIZE_PX,
       height       : QR_SIZE_PX,
       colorDark    : '#000000',
@@ -413,7 +436,13 @@ function generateQR() {
 
   qrPanel.hidden = false;
   qrPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  showToast('QR code generated!', 'success', 2000);
+  showToast(
+    generatedDownloadLink
+      ? 'QR code generated! Scan to download on another device.'
+      : 'QR code generated!',
+    'success',
+    2200
+  );
 }
 
 qrCloseBtn.addEventListener('click', () => {
