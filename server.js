@@ -79,6 +79,43 @@ function getLocalIP() {
   return 'localhost';
 }
 
+function getPublicBaseUrl(req) {
+  const forwardedProto = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost  = (req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const host           = forwardedHost || req.get('host') || '';
+  const normalizedHost = host.toLowerCase();
+
+  const isLocalHost = !host
+    || normalizedHost === 'localhost'
+    || normalizedHost.startsWith('localhost:')
+    || normalizedHost.startsWith('127.0.0.1')
+    || normalizedHost.startsWith('[::1]')
+    || normalizedHost.startsWith('0.0.0.0');
+
+  if (isLocalHost) {
+    return `http://${getLocalIP()}:${PORT}`;
+  }
+
+  const protocol = forwardedProto || req.protocol || 'http';
+  return `${protocol}://${host}`;
+}
+
+function sanitizeFilename(filename, fallback) {
+  if (typeof filename !== 'string') return fallback;
+  const safe = path.basename(filename.trim())
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!safe || safe === '.' || safe === '..') return fallback;
+  return safe.slice(0, 180);
+}
+
+function escapeQuotedHeaderValue(value) {
+  return value.replace(/([\\"])/g, '\\$1');
+}
+
 // ── Helper: detect file extension from content ──────────────
 function detectExtension(text) {
   const t = text.trimStart();
@@ -94,7 +131,7 @@ function detectExtension(text) {
   if (/^(package |import java\.|public class|@SpringBootApplication)/.test(t))   return { ext: 'java', mime: 'text/x-java-source' };
   if (/^(#include|int main|void |std::)/.test(t))     return { ext: 'cpp',  mime: 'text/x-c++src' };
   if (/^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b/i.test(t)) return { ext: 'sql', mime: 'text/x-sql' };
-  if (/^(#!/|echo |if \[|function )/.test(t))         return { ext: 'sh',   mime: 'text/x-shellscript' };
+  if (/^(#!\/|echo |if \[|function )/.test(t))        return { ext: 'sh',   mime: 'text/x-shellscript' };
   if (/^(---|\- name:| {2,}\w+:)/.test(t))            return { ext: 'yaml', mime: 'text/yaml' };
   if (/^(##|# |\*\*|\[.+\]\(.+\))/.test(t))          return { ext: 'md',   mime: 'text/markdown' };
   if (/[\w-]+\s*\{[\s\S]*?\}/.test(t) && /[{};]/.test(t)) return { ext: 'css', mime: 'text/css' };
@@ -125,8 +162,9 @@ function broadcast(payload, senderSessionId) {
  * the correct download link inside the QR code.
  */
 app.get('/api/server-url', (req, res) => {
+  const publicUrl = getPublicBaseUrl(req);
   const ip = getLocalIP();
-  res.json({ url: `http://${ip}:${PORT}`, ip, port: PORT });
+  res.json({ url: publicUrl, ip, port: PORT });
 });
 
 /**
@@ -144,9 +182,11 @@ app.post('/api/upload', (req, res) => {
 
   const token   = uuidv4();
   const { ext, mime } = detectExtension(text);
-  const finalName     = filename || `clipshare-${Date.now()}.${ext}`;
-  const ip            = getLocalIP();
-  const downloadUrl   = `http://${ip}:${PORT}/download/${token}`;
+  const defaultFilename = `clipshare-${Date.now()}.${ext}`;
+  const finalName       = sanitizeFilename(filename || defaultFilename, defaultFilename);
+  const baseUrl         = getPublicBaseUrl(req);
+  const downloadUrl     = `${baseUrl}/download/${token}`;
+  const shareUrl        = `${baseUrl}/share/${token}`;
 
   downloadTokens.set(token, {
     text,
@@ -157,7 +197,89 @@ app.post('/api/upload', (req, res) => {
   });
 
   console.log(`[UPLOAD] token=${token} | file=${finalName} | ${text.length} chars`);
-  return res.json({ success: true, token, downloadUrl, filename: finalName, ext });
+  return res.json({ success: true, token, downloadUrl, shareUrl, filename: finalName, ext });
+});
+
+app.get('/share/:token', (req, res) => {
+  const entry = downloadTokens.get(req.params.token);
+
+  if (!entry || entry.expiresAt < Date.now()) {
+    downloadTokens.delete(req.params.token);
+    return res.status(404).send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Link Expired – ClipShare</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0d1117;color:#e6edf3;
+         display:flex;flex-direction:column;align-items:center;justify-content:center;
+         min-height:100vh;margin:0;text-align:center;padding:24px}
+    h1{font-size:2rem;margin-bottom:12px}
+    p{color:#8b949e;line-height:1.6;max-width:540px}
+    a{color:#388bfd;text-decoration:none}
+    .icon{font-size:3rem;margin-bottom:16px}
+  </style>
+</head>
+<body>
+  <div class="icon">⏱</div>
+  <h1>Link Expired</h1>
+  <p>This download link has expired or doesn't exist.<br>
+     Please generate a new QR code on Device A.</p>
+  <p style="margin-top:24px"><a href="/">← Back to ClipShare</a></p>
+</body>
+</html>`);
+  }
+
+  const fileName = sanitizeFilename(entry.filename, `clipshare-${Date.now()}.txt`);
+  const downloadPath = `/download/${encodeURIComponent(req.params.token)}`;
+  const downloadUrl  = `${downloadPath}`;
+  const previewUrl   = `${downloadPath}?inline=1`;
+
+  return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Download ${fileName} – ClipShare</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0d1117;color:#e6edf3;
+         display:flex;flex-direction:column;align-items:center;justify-content:center;
+         min-height:100vh;margin:0;text-align:center;padding:24px}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:14px;padding:22px;max-width:560px;width:100%}
+    h1{font-size:1.5rem;margin-bottom:8px}
+    p{color:#8b949e;line-height:1.6}
+    .filename{color:#e6edf3;background:#0d1117;border:1px solid #30363d;padding:10px;border-radius:8px;word-break:break-all;margin:14px 0}
+    .actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+    .btn{display:inline-block;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:600}
+    .btn-primary{background:#388bfd;color:#fff}
+    .btn-ghost{border:1px solid #30363d;color:#e6edf3}
+    .hint{font-size:.85rem;margin-top:14px;color:#8b949e}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Your file is ready</h1>
+    <p>ClipShare will try to start the download automatically.</p>
+    <div class="filename">${fileName}</div>
+    <div class="actions">
+      <a class="btn btn-primary" id="downloadBtn" href="${downloadUrl}">Download file</a>
+      <a class="btn btn-ghost" href="${previewUrl}" target="_blank" rel="noopener">Open file preview</a>
+    </div>
+    <p class="hint">On iPhone/Safari, if a direct download does not start, open preview and use Share → Save to Files.</p>
+  </div>
+  <script>
+    (function () {
+      var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isIOS) return;
+      var iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = '${downloadUrl}';
+      document.body.appendChild(iframe);
+    })();
+  </script>
+</body>
+</html>`);
 });
 
 /**
@@ -196,9 +318,14 @@ app.get('/download/:token', (req, res) => {
 </html>`);
   }
 
-  const encodedName = encodeURIComponent(entry.filename);
-  res.setHeader('Content-Type', `${entry.mime}; charset=utf-8`);
-  res.setHeader('Content-Disposition', `attachment; filename="${entry.filename}"; filename*=UTF-8''${encodedName}`);
+  const safeFilename = sanitizeFilename(entry.filename, `clipshare-${Date.now()}.txt`);
+  const encodedName = encodeURIComponent(safeFilename);
+  const quotedName  = escapeQuotedHeaderValue(safeFilename);
+  const dispositionType = req.query.inline === '1' ? 'inline' : 'attachment';
+
+  res.setHeader('Content-Type', entry.mime || 'application/octet-stream');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${dispositionType}; filename="${quotedName}"; filename*=UTF-8''${encodedName}`);
   res.setHeader('Content-Length', Buffer.byteLength(entry.text, 'utf8'));
   res.setHeader('Cache-Control', 'no-store');
   res.send(entry.text);
