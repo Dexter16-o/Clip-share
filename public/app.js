@@ -20,6 +20,8 @@ const API_CLEAR   = '/api/clear';
 const DEBOUNCE_MS     = 900;   // ms to wait after last keystroke before pushing
 const QR_WARN_CHARS   = 1000;  // show warning above this length
 const QR_SIZE_PX      = 256;   // pixel size of generated QR
+const QR_MAX_DIRECT_BYTES = 800; // above this, QR holds a download link instead of the raw text
+const API_UPLOAD  = '/api/upload';
 const POLL_INTERVAL_MS= 3500;  // fallback polling interval when SSE fails
 
 // ── Session ID (unique per browser tab) ─────────────────────
@@ -378,11 +380,17 @@ clearBtn.addEventListener('click', async () => {
 
 qrBtn.addEventListener('click', generateQR);
 
-function generateQR() {
+async function generateQR() {
   const text = textarea.value.trim();
 
   if (!text) {
     showToast('Enter some text first before generating a QR code.', 'warning');
+    return;
+  }
+
+  // The browser QR library must be loaded (window.QRCode from QRCode.js)
+  if (typeof QRCode === 'undefined' || !QRCode.CorrectLevel) {
+    showToast('QR library did not load. Press Ctrl+F5 to reload the page.', 'error');
     return;
   }
 
@@ -393,18 +401,43 @@ function generateQR() {
     qrCodeInstance = null;
   }
 
-  // Size warning
-  qrSizeWarning.hidden = text.length <= QR_WARN_CHARS;
+  // Small text goes straight into the QR. Long text/code is too big for a
+  // QR code, so it is stored on the server and the QR holds a download link.
+  let qrText  = text;
+  let viaLink = false;
+  if (new TextEncoder().encode(text).length > QR_MAX_DIRECT_BYTES) {
+    qrBtn.disabled = true;
+    try {
+      const res  = await fetch(API_UPLOAD, {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.downloadUrl) throw new Error(data.error || `server error ${res.status}`);
+      qrText  = data.downloadUrl;
+      viaLink = true;
+    } catch (err) {
+      showToast('Text is too long for a QR code and the download link failed: ' + err.message, 'error');
+      return;
+    } finally {
+      qrBtn.disabled = false;
+    }
+  }
 
-  // Create QR Code using QRCode.js (loaded from CDN)
+  qrSizeWarning.textContent = viaLink
+    ? 'Your text is too long to fit in a QR code, so this QR opens a download link instead. Scan it with a phone on the same Wi-Fi. The link expires in 1 hour.'
+    : '';
+  qrSizeWarning.hidden = !viaLink;
+
   try {
     qrCodeInstance = new QRCode(qrContainer, {
-      text         : text,
+      text         : qrText,
       width        : QR_SIZE_PX,
       height       : QR_SIZE_PX,
       colorDark    : '#000000',
       colorLight   : '#ffffff',
-      correctLevel : text.length > 500 ? QRCode.CorrectLevel.L : QRCode.CorrectLevel.M,
+      correctLevel : QRCode.CorrectLevel.M,
     });
   } catch (err) {
     showToast('Failed to generate QR: ' + err.message, 'error');
@@ -413,7 +446,7 @@ function generateQR() {
 
   qrPanel.hidden = false;
   qrPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  showToast('QR code generated!', 'success', 2000);
+  showToast(viaLink ? 'QR code generated (download link)' : 'QR code generated!', 'success', 2000);
 }
 
 qrCloseBtn.addEventListener('click', () => {
