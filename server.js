@@ -94,7 +94,7 @@ function detectExtension(text) {
   if (/^(package |import java\.|public class|@SpringBootApplication)/.test(t))   return { ext: 'java', mime: 'text/x-java-source' };
   if (/^(#include|int main|void |std::)/.test(t))     return { ext: 'cpp',  mime: 'text/x-c++src' };
   if (/^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b/i.test(t)) return { ext: 'sql', mime: 'text/x-sql' };
-  if (/^(#!/|echo |if \[|function )/.test(t))         return { ext: 'sh',   mime: 'text/x-shellscript' };
+  if (/^(#!\/|echo |if \[|function )/.test(t))         return { ext: 'sh',   mime: 'text/x-shellscript' };
   if (/^(---|\- name:| {2,}\w+:)/.test(t))            return { ext: 'yaml', mime: 'text/yaml' };
   if (/^(##|# |\*\*|\[.+\]\(.+\))/.test(t))          return { ext: 'md',   mime: 'text/markdown' };
   if (/[\w-]+\s*\{[\s\S]*?\}/.test(t) && /[{};]/.test(t)) return { ext: 'css', mime: 'text/css' };
