@@ -69,6 +69,17 @@ const scannerCloseBtn  = document.getElementById('scannerCloseBtn');
 const scannerResult    = document.getElementById('scannerResult');
 const scannerResultPreview = document.getElementById('scannerResultPreview');
 const scannerUseBtn    = document.getElementById('scannerUseBtn');
+const scannerSaveFileBtn = document.getElementById('scannerSaveFileBtn');
+
+const offlineFileInput = document.getElementById('offlineFileInput');
+const offlineGenerateBtn = document.getElementById('offlineGenerateBtn');
+const offlineTransferStatus = document.getElementById('offlineTransferStatus');
+const offlineQrStage = document.getElementById('offlineQrStage');
+const offlineQrContainer = document.getElementById('offlineQrContainer');
+const offlineQrProgress = document.getElementById('offlineQrProgress');
+const offlinePrevBtn = document.getElementById('offlinePrevBtn');
+const offlineNextBtn = document.getElementById('offlineNextBtn');
+const offlineDownloadQrBtn = document.getElementById('offlineDownloadQrBtn');
 const qrReaderContainer= document.getElementById('qrReaderContainer');
 const cameraSelectRow  = document.getElementById('cameraSelectRow');
 const cameraSelect     = document.getElementById('cameraSelect');
@@ -87,6 +98,9 @@ let lastScannedText   = '';           // holds last scan result
 let availableCameras  = [];
 let activeCameraId    = null;
 let suppressPush      = false;        // flag: skip push when we're updating from remote
+let reconstructedFileUrl = null;
+let reconstructedFileName = null;
+let offlineQrInstance = null;
 
 // ════════════════════════════════════════════════════════════
 //   UTILITIES
@@ -380,6 +394,63 @@ clearBtn.addEventListener('click', async () => {
 
 qrBtn.addEventListener('click', generateQR);
 
+// Offline multi-QR file sender. The file is encoded entirely in the browser.
+offlineGenerateBtn.addEventListener('click', generateOfflineFileQR);
+offlinePrevBtn.addEventListener('click', () => renderOfflineQr(ClipShareOffline.moveOutgoing(-1)));
+offlineNextBtn.addEventListener('click', () => renderOfflineQr(ClipShareOffline.moveOutgoing(1)));
+offlineDownloadQrBtn.addEventListener('click', () => {
+  const canvas = offlineQrContainer.querySelector('canvas');
+  if (!canvas) { showToast('Generate a QR first.', 'warning'); return; }
+  const link = document.createElement('a');
+  link.download = 'clipshare-part-' + ((ClipShareOffline.getOutgoing()?.index || 0) + 1) + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+});
+
+async function generateOfflineFileQR() {
+  const file = offlineFileInput.files && offlineFileInput.files[0];
+  if (!file) { showToast('Choose a file first.', 'warning'); return; }
+  if (typeof QRCode === 'undefined' || !QRCode.CorrectLevel) {
+    showToast('QR generator library is unavailable.', 'error'); return;
+  }
+  offlineGenerateBtn.disabled = true;
+  offlineTransferStatus.textContent = 'Preparing file locally…';
+  try {
+    const state = await ClipShareOffline.createTransfer(file);
+    offlineQrStage.hidden = false;
+    renderOfflineQr(state);
+    offlineTransferStatus.textContent = 'File encoded locally. No upload or network transfer is used.';
+    showToast('Offline QR sequence ready.', 'success');
+  } catch (err) {
+    offlineTransferStatus.textContent = err.message || 'Could not prepare this file.';
+    showToast(offlineTransferStatus.textContent, 'error', 4500);
+  } finally {
+    offlineGenerateBtn.disabled = false;
+  }
+}
+
+function renderOfflineQr(state) {
+  if (!state) return;
+  offlineQrContainer.innerHTML = '';
+  if (offlineQrInstance) {
+    try { offlineQrInstance.clear(); } catch (_) {}
+    offlineQrInstance = null;
+  }
+  try {
+    offlineQrInstance = new QRCode(offlineQrContainer, {
+      text: state.payload, width: 320, height: 320,
+      colorDark: '#000000', colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+  } catch (err) {
+    offlineTransferStatus.textContent = 'This QR payload is too large for the current QR library: ' + err.message;
+    return;
+  }
+  offlineQrProgress.textContent = 'QR ' + (state.index + 1) + ' of ' + state.total + ' · ' + state.name + ' · ' + (state.size / 1024).toFixed(1) + ' KB';
+  offlinePrevBtn.disabled = state.index === 0;
+  offlineNextBtn.disabled = state.index === state.total - 1;
+}
+
 async function generateQR() {
   const text = textarea.value.trim();
 
@@ -475,6 +546,10 @@ scannerCloseBtn.addEventListener('click', closeScanner);
 function openScanner() {
   scannerModal.hidden = false;
   scannerResult.hidden = true;
+  scannerUseBtn.hidden = false;
+  scannerSaveFileBtn.hidden = true;
+  reconstructedFileUrl = null;
+  reconstructedFileName = null;
   lastScannedText = '';
 
   // Prevent body scroll while modal is open
@@ -555,22 +630,59 @@ async function startHtml5QrScanner(cameraId) {
   }
 }
 
-function onScanSuccess(decodedText) {
-  if (decodedText === lastScannedText) return; // debounce repeated reads
+async function onScanSuccess(decodedText) {
+  if (decodedText === lastScannedText) return;
   lastScannedText = decodedText;
 
-  // Pause scanner (visual confirmation before closing)
-  if (html5QrScanner) {
-    html5QrScanner.pause(true);
+  if (ClipShareOffline.isChunk(decodedText)) {
+    try {
+      const result = await ClipShareOffline.receiveChunk(decodedText);
+      scannerResult.hidden = false;
+      scannerSaveFileBtn.hidden = true;
+      scannerUseBtn.hidden = true;
+      if (result.kind === 'chunk') {
+        scannerResultPreview.textContent = 'Receiving ' + result.name + '\\n' +
+          result.received + ' of ' + result.total + ' unique QR chunks received.\\n' +
+          (result.duplicate ? 'Duplicate chunk ignored.\\n' : '') +
+          (result.missing.length ? 'Still needed: ' + result.missing.join(', ') : '');
+        showToast(result.duplicate ? 'Duplicate QR ignored.' : 'Chunk received.', 'success', 1600);
+        // Continue scanning. Reset the duplicate guard so the next QR can be read.
+        setTimeout(() => { if (lastScannedText === decodedText) lastScannedText = ''; }, 900);
+      } else if (result.kind === 'complete') {
+        if (html5QrScanner) { try { html5QrScanner.pause(true); } catch (_) {} }
+        reconstructedFileUrl = result.url;
+        reconstructedFileName = result.name;
+        scannerResultPreview.textContent = 'File reconstructed and verified!\\n' +
+          result.name + ' (' + (result.size / 1024).toFixed(1) + ' KB)\\nSHA-256 checksum verified.';
+        scannerSaveFileBtn.hidden = false;
+        scannerUseBtn.hidden = true;
+        showToast('File reconstructed and verified.', 'success', 3000);
+      }
+    } catch (err) {
+      scannerResult.hidden = false;
+      scannerResultPreview.textContent = err.message || 'Invalid QR chunk.';
+      scannerSaveFileBtn.hidden = true;
+      scannerUseBtn.hidden = true;
+      showToast(scannerResultPreview.textContent, 'error', 3500);
+      setTimeout(() => { if (lastScannedText === decodedText) lastScannedText = ''; }, 1200);
+    }
+    return;
   }
 
-  // Show result preview
-  scannerResultPreview.textContent =
-    decodedText.length > 200 ? decodedText.slice(0, 200) + '…' : decodedText;
+  if (html5QrScanner) html5QrScanner.pause(true);
+  scannerSaveFileBtn.hidden = true;
+  scannerUseBtn.hidden = false;
+  scannerResultPreview.textContent = decodedText.length > 200 ? decodedText.slice(0, 200) + '…' : decodedText;
   scannerResult.hidden = false;
-
   showToast('QR code scanned!', 'success', 2000);
 }
+
+scannerSaveFileBtn.addEventListener('click', () => {
+  if (!reconstructedFileUrl || !reconstructedFileName) return;
+  ClipShareOffline.saveFile(reconstructedFileUrl, reconstructedFileName);
+  closeScanner();
+  showToast('File save requested.', 'success');
+});
 
 // "Use This Text" button
 scannerUseBtn.addEventListener('click', () => {
