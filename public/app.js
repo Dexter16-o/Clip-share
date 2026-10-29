@@ -80,6 +80,10 @@ const offlineQrProgress = document.getElementById('offlineQrProgress');
 const offlinePrevBtn = document.getElementById('offlinePrevBtn');
 const offlineNextBtn = document.getElementById('offlineNextBtn');
 const offlineDownloadQrBtn = document.getElementById('offlineDownloadQrBtn');
+const onlineFileUploadBtn = document.getElementById('onlineFileUploadBtn');
+const onlineFileQrStage = document.getElementById('onlineFileQrStage');
+const onlineFileQrContainer = document.getElementById('onlineFileQrContainer');
+const onlineFileQrStatus = document.getElementById('onlineFileQrStatus');
 const qrReaderContainer= document.getElementById('qrReaderContainer');
 const cameraSelectRow  = document.getElementById('cameraSelectRow');
 const cameraSelect     = document.getElementById('cameraSelect');
@@ -398,6 +402,51 @@ qrBtn.addEventListener('click', generateQR);
 offlineGenerateBtn.addEventListener('click', generateOfflineFileQR);
 offlinePrevBtn.addEventListener('click', () => renderOfflineQr(ClipShareOffline.moveOutgoing(-1)));
 offlineNextBtn.addEventListener('click', () => renderOfflineQr(ClipShareOffline.moveOutgoing(1)));
+onlineFileUploadBtn.addEventListener('click', uploadFileForOnlineShare);
+
+async function uploadFileForOnlineShare() {
+  const file = offlineFileInput.files && offlineFileInput.files[0];
+  if (!file) { showToast('Choose a file first.', 'warning'); return; }
+  if (!navigator.onLine) {
+    showToast('Online sharing needs an internet connection. Use Offline File Transfer instead.', 'warning', 4000);
+    return;
+  }
+  if (file.size === 0 || file.size > 2 * 1024 * 1024) {
+    showToast('Online sharing supports files up to 2 MB in this version.', 'warning', 4000);
+    return;
+  }
+  onlineFileUploadBtn.disabled = true;
+  onlineFileQrStatus.textContent = 'Uploading file securely to ClipShare…';
+  onlineFileQrStage.hidden = false;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    const response = await fetch('/api/file-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileBase64: btoa(binary), filename: file.name, mimeType: file.type || 'application/octet-stream' })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.downloadUrl) throw new Error(data.error || 'Upload failed.');
+    onlineFileQrContainer.innerHTML = '';
+    new QRCode(onlineFileQrContainer, {
+      text: data.downloadUrl, width: 280, height: 280,
+      colorDark: '#000000', colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.M
+    });
+    onlineFileQrStatus.textContent = 'Online share link created for ' + data.filename + '. It expires in 1 hour. Students need internet to download.';
+    showToast('Online file QR generated.', 'success');
+  } catch (err) {
+    onlineFileQrStatus.textContent = err.message || 'Online upload failed.';
+    showToast(onlineFileQrStatus.textContent, 'error', 4000);
+  } finally {
+    onlineFileUploadBtn.disabled = false;
+  }
+}
+
 offlineDownloadQrBtn.addEventListener('click', () => {
   const canvas = offlineQrContainer.querySelector('canvas');
   if (!canvas) { showToast('Generate a QR first.', 'warning'); return; }
