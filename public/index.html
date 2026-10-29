@@ -19,30 +19,7 @@
   <!-- PWA Manifest (sets app name + icon in browser tab / installed app) -->
   <link rel="manifest" href="/manifest.json" />
 
-  <!--
-    Unregister any old service workers and wipe stale caches from previous
-    projects on this origin so the correct app name and icon appear instantly.
-  -->
-  <script>
-    (function () {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          regs.forEach(function (reg) {
-            reg.unregister();
-            console.log('[ClipShare] Removed stale SW:', reg.scope);
-          });
-        });
-      }
-      if ('caches' in window) {
-        caches.keys().then(function (keys) {
-          keys.forEach(function (key) {
-            caches.delete(key);
-            console.log('[ClipShare] Cleared cache:', key);
-          });
-        });
-      }
-    })();
-  </script>
+  <!-- Offline caching is handled by sw.js. -->
 
   <link rel="stylesheet" href="style.css" />
 
@@ -154,6 +131,36 @@
     </section>
 
     <!-- ── LAST SYNC INFO ────────────────────────────── -->
+    <!-- OFFLINE FILE TRANSFER -->
+    <section class="card offline-transfer-card" id="offlineTransferCard">
+      <div class="card-toolbar">
+        <span class="card-title">Offline File Transfer</span>
+        <span class="char-count">No network required</span>
+      </div>
+      <p class="qr-hint">Split a file into numbered QR codes. The receiving phone must use the ClipShare scanner to reconstruct it.</p>
+      <div class="offline-file-controls">
+        <label class="file-picker-label" for="offlineFileInput">Choose a file (.java, .py, .html, .css, .js, .txt, etc.)</label>
+        <input id="offlineFileInput" type="file" />
+        <button class="btn btn-secondary" id="offlineGenerateBtn" type="button">Generate offline QR sequence</button>
+        <button class="btn btn-primary" id="onlineFileUploadBtn" type="button">Create online download QR</button>
+      </div>
+      <div id="offlineTransferStatus" class="offline-transfer-status" aria-live="polite">Choose a file to begin. Maximum file size: 50 KB in this initial version.</div>
+      <div id="onlineFileQrStage" hidden>
+        <p class="qr-hint">Online QR: students need internet to open this expiring download link.</p>
+        <div class="qr-wrapper"><div id="onlineFileQrContainer"></div></div>
+        <p id="onlineFileQrStatus" class="offline-transfer-status"></p>
+      </div>
+      <div id="offlineQrStage" hidden>
+        <div class="qr-wrapper"><div id="offlineQrContainer"></div></div>
+        <div class="offline-qr-progress" id="offlineQrProgress"></div>
+        <div class="offline-qr-controls">
+          <button class="btn btn-ghost" id="offlinePrevBtn" type="button">← Previous</button>
+          <button class="btn btn-primary" id="offlineNextBtn" type="button">Next QR →</button>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="offlineDownloadQrBtn" type="button">Download current QR as PNG</button>
+      </div>
+    </section>
+
     <div class="sync-meta" id="syncMeta" hidden>
       <span id="syncMetaText"></span>
     </div>
@@ -182,6 +189,7 @@
         <p class="scanner-result-label">Scanned successfully!</p>
         <pre class="scanner-result-preview" id="scannerResultPreview"></pre>
         <button class="btn btn-primary" id="scannerUseBtn">Use This Text</button>
+        <button class="btn btn-secondary" id="scannerSaveFileBtn" hidden>Save reconstructed file</button>
       </div>
 
       <!-- Camera select for desktop multi-camera setups -->
@@ -198,6 +206,12 @@
   ═══════════════════════════════════════════════════ -->
   <div class="toast-container" id="toastContainer"></div>
 
+  <script src="offline-transfer.js?v=1"></script>
+  <script>
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(err => console.warn('[ClipShare] Offline cache unavailable:', err)));
+    }
+  </script>
   <script src="app.js?v=3"></script>
 </body>
 </html>

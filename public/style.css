@@ -593,3 +593,30 @@ body {
   .main-textarea { min-height: 220px; }
   .action-row .btn { flex: 1 1 100%; }
 }
+
+
+/* ── Offline multi-QR file transfer ───────────────────────── */
+.offline-transfer-card { margin-top: 20px; }
+.offline-file-controls { display: grid; gap: 12px; margin-top: 14px; }
+.file-picker-label { color: var(--text-secondary); font-size: .9rem; }
+#offlineFileInput {
+  width: 100%; padding: 12px; border: 1px dashed var(--border);
+  border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-primary);
+}
+.offline-transfer-status {
+  margin-top: 14px; padding: 12px; border-radius: var(--radius-md);
+  background: var(--bg-elevated); color: var(--text-secondary); font-size: .9rem;
+  overflow-wrap: anywhere;
+}
+#offlineQrStage { margin-top: 18px; }
+#offlineQrContainer { padding: 12px; background: #fff; border-radius: var(--radius-md); }
+#offlineQrContainer canvas, #offlineQrContainer img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.offline-qr-progress { text-align: center; margin: 12px 0; color: var(--text-secondary); font-size: .92rem; }
+.offline-qr-controls { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0; }
+.offline-qr-controls .btn { flex: 1; }
+.offline-qr-controls .btn:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 520px) {
+  .offline-qr-controls { flex-direction: column; }
+}
+
+#onlineFileQrContainer canvas, #onlineFileQrContainer img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
