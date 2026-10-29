@@ -208,7 +208,7 @@
 
   <script src="offline-transfer.js?v=1"></script>
   <script>
-    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
       window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(err => console.warn('[ClipShare] Offline cache unavailable:', err)));
     }
   </script>
