@@ -150,7 +150,7 @@ app.post('/api/upload', (req, res) => {
   const token   = uuidv4();
   const { ext, mime } = detectExtension(text);
   const finalName     = filename || `clipshare-${Date.now()}.${ext}`;
-  const baseUrl       = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\\/$/, '');
+  const baseUrl       = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
   const downloadUrl   = `${baseUrl}/download/${token}`;
 
   downloadTokens.set(token, {
@@ -181,7 +181,7 @@ app.post('/api/file-upload', (req, res) => {
   }
   const token = uuidv4();
   const safeName = path.basename(String(filename || 'clipshare-file.bin')).replace(/[\\\\/<>:"|?*\\x00-\\x1f]/g, '_').slice(0, 120) || 'clipshare-file.bin';
-  const baseUrl = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\\/$/, '');
+  const baseUrl = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
   fileDownloadTokens.set(token, {
     buffer, filename: safeName,
     mime: String(mimeType).slice(0, 120),
