@@ -20,6 +20,7 @@ const path    = require('path');
 const os      = require('os');
 
 const app  = express();
+app.set('trust proxy', 1); // Honor HTTPS forwarded by platforms such as Render.
 const PORT = process.env.PORT || 3000;
 
 // ── Middleware ──────────────────────────────────────────────
