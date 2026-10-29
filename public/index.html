@@ -19,30 +19,7 @@
   <!-- PWA Manifest (sets app name + icon in browser tab / installed app) -->
   <link rel="manifest" href="/manifest.json" />
 
-  <!--
-    Unregister any old service workers and wipe stale caches from previous
-    projects on this origin so the correct app name and icon appear instantly.
-  -->
-  <script>
-    (function () {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          regs.forEach(function (reg) {
-            reg.unregister();
-            console.log('[ClipShare] Removed stale SW:', reg.scope);
-          });
-        });
-      }
-      if ('caches' in window) {
-        caches.keys().then(function (keys) {
-          keys.forEach(function (key) {
-            caches.delete(key);
-            console.log('[ClipShare] Cleared cache:', key);
-          });
-        });
-      }
-    })();
-  </script>
+  <!-- Offline caching is handled by sw.js. -->
 
   <link rel="stylesheet" href="style.css" />
 
@@ -224,6 +201,11 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="offline-transfer.js?v=1"></script>
+  <script>
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(err => console.warn('[ClipShare] Offline cache unavailable:', err)));
+    }
+  </script>
   <script src="app.js?v=3"></script>
 </body>
 </html>
