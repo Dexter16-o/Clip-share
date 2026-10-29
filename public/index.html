@@ -142,8 +142,14 @@
         <label class="file-picker-label" for="offlineFileInput">Choose a file (.java, .py, .html, .css, .js, .txt, etc.)</label>
         <input id="offlineFileInput" type="file" />
         <button class="btn btn-secondary" id="offlineGenerateBtn" type="button">Generate offline QR sequence</button>
+        <button class="btn btn-primary" id="onlineFileUploadBtn" type="button">Create online download QR</button>
       </div>
       <div id="offlineTransferStatus" class="offline-transfer-status" aria-live="polite">Choose a file to begin. Maximum file size: 50 KB in this initial version.</div>
+      <div id="onlineFileQrStage" hidden>
+        <p class="qr-hint">Online QR: students need internet to open this expiring download link.</p>
+        <div class="qr-wrapper"><div id="onlineFileQrContainer"></div></div>
+        <p id="onlineFileQrStatus" class="offline-transfer-status"></p>
+      </div>
       <div id="offlineQrStage" hidden>
         <div class="qr-wrapper"><div id="offlineQrContainer"></div></div>
         <div class="offline-qr-progress" id="offlineQrProgress"></div>
