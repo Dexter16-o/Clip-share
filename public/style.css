@@ -618,3 +618,5 @@ body {
 @media (max-width: 520px) {
   .offline-qr-controls { flex-direction: column; }
 }
+
+#onlineFileQrContainer canvas, #onlineFileQrContainer img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
