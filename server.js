@@ -24,8 +24,8 @@ const PORT = process.env.PORT || 3000;
 
 // ── Middleware ──────────────────────────────────────────────
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+app.use(express.json({ limit: '4mb' }));
+app.use(express.urlencoded({ extended: true, limit: '4mb' }));
 
 // Force revalidation of HTML/JS/CSS so browsers never cache stale files
 app.use((req, res, next) => {
@@ -51,6 +51,8 @@ let sharedStore = {
 // Map<token, { text, filename, mime, createdAt, expiresAt }>
 const downloadTokens = new Map();
 const TOKEN_TTL_MS   = 60 * 60 * 1000; // 1 hour
+const fileDownloadTokens = new Map();
+const MAX_ONLINE_FILE_BYTES = 2 * 1024 * 1024; // 2 MB in-memory limit
 
 // Cleanup expired tokens every 15 minutes
 setInterval(() => {
@@ -60,6 +62,9 @@ setInterval(() => {
       downloadTokens.delete(token);
       console.log(`[CLEANUP] Expired token ${token}`);
     }
+  }
+  for (const [token, entry] of fileDownloadTokens) {
+    if (entry.expiresAt < now) fileDownloadTokens.delete(token);
   }
 }, 15 * 60 * 1000);
 
@@ -145,8 +150,8 @@ app.post('/api/upload', (req, res) => {
   const token   = uuidv4();
   const { ext, mime } = detectExtension(text);
   const finalName     = filename || `clipshare-${Date.now()}.${ext}`;
-  const ip            = getLocalIP();
-  const downloadUrl   = `http://${ip}:${PORT}/download/${token}`;
+  const baseUrl       = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\\/$/, '');
+  const downloadUrl   = `${baseUrl}/download/${token}`;
 
   downloadTokens.set(token, {
     text,
@@ -158,6 +163,48 @@ app.post('/api/upload', (req, res) => {
 
   console.log(`[UPLOAD] token=${token} | file=${finalName} | ${text.length} chars`);
   return res.json({ success: true, token, downloadUrl, filename: finalName, ext });
+});
+
+/**
+ * POST /api/file-upload
+ * Online-only file sharing. Files are stored temporarily in memory.
+ * Body: { fileBase64, filename, mimeType }
+ */
+app.post('/api/file-upload', (req, res) => {
+  const { fileBase64, filename, mimeType = 'application/octet-stream' } = req.body || {};
+  if (typeof fileBase64 !== 'string' || !fileBase64) {
+    return res.status(400).json({ error: 'Missing file data.' });
+  }
+  const buffer = Buffer.from(fileBase64, 'base64');
+  if (!buffer.length || buffer.length > MAX_ONLINE_FILE_BYTES) {
+    return res.status(413).json({ error: 'Online file sharing supports files up to 2 MB in this version.' });
+  }
+  const token = uuidv4();
+  const safeName = path.basename(String(filename || 'clipshare-file.bin')).replace(/[\\\\/<>:"|?*\\x00-\\x1f]/g, '_').slice(0, 120) || 'clipshare-file.bin';
+  const baseUrl = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\\/$/, '');
+  fileDownloadTokens.set(token, {
+    buffer, filename: safeName,
+    mime: String(mimeType).slice(0, 120),
+    expiresAt: Date.now() + TOKEN_TTL_MS
+  });
+  res.json({ success: true, filename: safeName, expiresInSeconds: TOKEN_TTL_MS / 1000, downloadUrl: `${baseUrl}/file-download/${token}` });
+});
+
+/**
+ * GET /file-download/:token
+ */
+app.get('/file-download/:token', (req, res) => {
+  const entry = fileDownloadTokens.get(req.params.token);
+  if (!entry || entry.expiresAt < Date.now()) {
+    fileDownloadTokens.delete(req.params.token);
+    return res.status(404).send('This ClipShare file link has expired. Ask the sender to create a new QR code.');
+  }
+  const encodedName = encodeURIComponent(entry.filename);
+  res.setHeader('Content-Type', entry.mime);
+  res.setHeader('Content-Disposition', `attachment; filename="download"; filename*=UTF-8''${encodedName}`);
+  res.setHeader('Content-Length', entry.buffer.length);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(entry.buffer);
 });
 
 /**
